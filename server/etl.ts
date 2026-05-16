@@ -245,12 +245,13 @@ function cleanActivity(raw: Record<string, unknown>): InsertWxActivity {
 function cleanMessage(raw: Record<string, unknown>): InsertWxMessage {
   const now = new Date();
 
-  // 优先用 createdAt，其次用 timestamp 毫秒数
-  let createdAt: Date = now;
-  if (raw.createdAt != null) {
-    createdAt = toDate(raw.createdAt) ?? now;
-  } else if (raw.timestamp != null) {
+  // 松果记录时间：使用 timestamp 毫秒级时间戳（弃用 createdAt）
+  let createdAt: Date;
+  if (raw.timestamp != null) {
     createdAt = new Date(toInt(raw.timestamp));
+    if (isNaN(createdAt.getTime())) createdAt = now;
+  } else {
+    createdAt = now;
   }
 
   return {

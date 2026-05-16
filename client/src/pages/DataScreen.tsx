@@ -436,10 +436,10 @@ export default function DataScreen() {
     ended: "已结束",
   };
 
-  // AI 活跃率
+  // AI 活跃率：今日数量占总数的百分比（0-100）
   const aiRate =
     ai?.totalCount && ai.totalCount > 0
-      ? Math.min(100, Math.round((ai.todayCount / ai.totalCount) * 100 * 10))
+      ? Math.min(100, Math.round((ai.todayCount / ai.totalCount) * 100))
       : 0;
 
   // ── 渲染 ─────────────────────────────────────────────────────
@@ -654,17 +654,6 @@ export default function DataScreen() {
                   {" / "}
                   <span style={{ color: TEXT_MAIN }}>{fmt(ai?.totalCount)}</span>
                 </div>
-                {/* 临时调试信息，确认后删除 */}
-                {(ai as any)?.debugAi && (
-                  <div style={{ fontSize: 7, color: "#888", marginTop: 2, textAlign: "left", lineHeight: 1.4, maxWidth: 120 }}>
-                    <div>TZ: {(ai as any).debugAi.mysqlSessionTz}/{(ai as any).debugAi.mysqlGlobalTz}</div>
-                    <div>NOW: {String((ai as any).debugAi.mysqlNow).slice(0,19)}</div>
-                    <div>created: {(ai as any).debugAi.latestCreatedAt?.slice(0,19)}</div>
-                    <div>synced: {(ai as any).debugAi.latestSyncedAt?.slice(0,19)}</div>
-                    <div>today-c: {(ai as any).debugAi.todayByCreatedAt}</div>
-                    <div>today-s: {(ai as any).debugAi.todayBySyncedAt}</div>
-                  </div>
-                )}
               </div>
               {/* 问答配对自动流动弹幕 */}
               <AiChatScroller questions={ai?.recentQuestions ?? []} />
@@ -1005,7 +994,7 @@ function WaveMeter({ value, color }: { value: number; color: string }) {
         fontSize={14}
         fontWeight="700"
       >
-        {value}‰
+        {value}%
       </text>
     </svg>
   );

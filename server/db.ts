@@ -385,7 +385,7 @@ export async function bulkUpsertWxMessages(records: InsertWxMessage[]) {
         senderNick: record.senderNick,
         content: record.content,
         type: record.type,
-        syncedAt: new Date(),
+        // syncedAt 仅在首次插入时设置，duplicate 不更新，以保持首次同步时间
       },
     });
     synced++;
@@ -519,37 +519,12 @@ export async function getScreenAiActivity() {
   const db = await getDb();
   if (!db) return { todayCount: 0, totalCount: 0, recentQuestions: [] };
   const [totalResult] = await db.select({ count: count() }).from(wxMessages);
-  // ── 今日统计：同时用 createdAt 和 syncedAt 两种方式计算，取较大值 ──
-  // 查询 MySQL session 时区
-  const tzRaw = await db.execute(sql`SELECT @@session.time_zone as tz, @@global.time_zone as gtz, NOW() as now_val`);
-  const mysqlTz = (tzRaw[0] as unknown as any[])[0];
-  // 策略：直接用 MySQL 的 CURDATE() 来判断“今天”，避免 JS/MySQL 时区偏移
-  // 同时用 createdAt 和 syncedAt 两个字段分别统计，取较大值
-  const todayByCreatedAt = await db.execute(sql`
+  // 今日统计：以 createdAt 为准（syncedAt 每次 ETL 同步都会被刷新，不可用）
+  const todayResult = await db.execute(sql`
     SELECT COUNT(*) as cnt FROM wx_messages
     WHERE DATE(createdAt) = CURDATE()
   `);
-  const todayBySync = await db.execute(sql`
-    SELECT COUNT(*) as cnt FROM wx_messages
-    WHERE DATE(syncedAt) = CURDATE()
-  `);
-  const cntByCreated = Number((todayByCreatedAt[0] as unknown as any[])[0]?.cnt ?? 0);
-  const cntBySync = Number((todayBySync[0] as unknown as any[])[0]?.cnt ?? 0);
-  const todayResult = { count: Math.max(cntByCreated, cntBySync) };
-  // 调试信息：返回完整的时区和数据信息
-  const latestRaw = await db.execute(sql`
-    SELECT createdAt, syncedAt FROM wx_messages ORDER BY id DESC LIMIT 1
-  `);
-  const latestRow = (latestRaw[0] as unknown as any[])[0] ?? {};
-  const debugAi = {
-    mysqlSessionTz: String(mysqlTz?.tz ?? ''),
-    mysqlGlobalTz: String(mysqlTz?.gtz ?? ''),
-    mysqlNow: String(mysqlTz?.now_val ?? ''),
-    latestCreatedAt: latestRow.createdAt instanceof Date ? latestRow.createdAt.toISOString() : String(latestRow.createdAt ?? 'null'),
-    latestSyncedAt: latestRow.syncedAt instanceof Date ? latestRow.syncedAt.toISOString() : String(latestRow.syncedAt ?? 'null'),
-    todayByCreatedAt: cntByCreated,
-    todayBySyncedAt: cntBySync,
-  };
+  const todayCount = Number((todayResult[0] as unknown as any[])[0]?.cnt ?? 0);
   // content = 用户提问，senderNick = AI 回复（ETL 临时借用）
   // 取 50 条以保证弹幕内容充足
   const recentRaw = await db.select({
@@ -566,7 +541,7 @@ export async function getScreenAiActivity() {
     nick: (m.senderId ?? '').slice(-6) || '用户',
     createdAt: m.createdAt,
   }));
-  return { todayCount: todayResult.count, totalCount: totalResult.count, recentQuestions, debugAi };
+  return { todayCount, totalCount: totalResult.count, recentQuestions };
 }
 
 /** 中央主视觉：文章热力图 - 按浏览量展示各文章热度气泡（返回对数缩放值以解决两极化） */
