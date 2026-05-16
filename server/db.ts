@@ -451,11 +451,12 @@ export async function getScreenDeviceStats() {
     GROUP BY name
     ORDER BY cnt DESC
   `);
-  // Top5 注册月份（按月统计注册人数）
+  // Top5 手机型号（phoneModel 字段来自微信云 phone_model）
   const modelRaw = await db.execute(sql`
-    SELECT DATE_FORMAT(createdAt, '%Y-%m') as model, COUNT(*) as cnt
+    SELECT COALESCE(NULLIF(TRIM(phoneModel),''), '未知型号') as model, COUNT(*) as cnt
     FROM wx_users
-    GROUP BY model
+    WHERE phoneModel IS NOT NULL AND phoneModel != ''
+    GROUP BY phoneModel
     ORDER BY cnt DESC
     LIMIT 5
   `);
@@ -488,16 +489,28 @@ export async function getScreenUserGrowth() {
   return { monthly, peakMonth };
 }
 
-/** 左侧 C：松果 AI 助手活跃度 */
+/** 左侧 C：松果 AI 助手活跃度（问答配对） */
 export async function getScreenAiActivity() {
   const db = await getDb();
   if (!db) return { todayCount: 0, totalCount: 0, recentQuestions: [] };
   const [totalResult] = await db.select({ count: count() }).from(wxMessages);
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
   const [todayResult] = await db.select({ count: count() }).from(wxMessages).where(gte(wxMessages.createdAt, todayStart));
-  const recentRaw = await db.select({ id: wxMessages.id, content: wxMessages.content, senderId: wxMessages.senderId, createdAt: wxMessages.createdAt }).from(wxMessages).orderBy(desc(wxMessages.createdAt)).limit(10);
-  // content = 用户提问，senderNick 实际存的是 AI 回复，展示时用 senderId 尾部作为标识
-  const recentQuestions = recentRaw.map(m => ({ id: m.id, preview: (m.content ?? '').slice(0, 20), nick: (m.senderId ?? '').slice(-6) || '用户', createdAt: m.createdAt }));
+  // content = 用户提问，senderNick = AI 回复（ETL 临时借用）
+  const recentRaw = await db.select({
+    id: wxMessages.id,
+    content: wxMessages.content,
+    senderNick: wxMessages.senderNick,
+    senderId: wxMessages.senderId,
+    createdAt: wxMessages.createdAt,
+  }).from(wxMessages).orderBy(desc(wxMessages.createdAt)).limit(10);
+  const recentQuestions = recentRaw.map(m => ({
+    id: m.id,
+    question: (m.content ?? '').slice(0, 30),
+    answer: (m.senderNick ?? '').slice(0, 30),
+    nick: (m.senderId ?? '').slice(-6) || '用户',
+    createdAt: m.createdAt,
+  }));
   return { todayCount: todayResult.count, totalCount: totalResult.count, recentQuestions };
 }
 
@@ -526,16 +539,17 @@ export async function getScreenArticleBubble() {
   return { bubbles };
 }
 
-/** 中央底部：平台官方账号流水墙（senderId 或 receiverId = 官方 openid） */
+/** 中央底部：平台官方账号流水墙（senderId 或 receiverId = 官方 _id） */
 export async function getScreenCoinsFeed() {
   const db = await getDb();
   if (!db) return { feed: [] };
-  const OFFICIAL_OPENID = 'osQsQ7bWKowC7xczUVFuWQcF-eTI';
+  // Cookies 集合中 senderId/receiverId 存的是用户 _id，不是 openid
+  const OFFICIAL_ID = '6d99dae869970b5a01151dce5b866f7c';
   // 查询官方账号作为发送方或接收方的流水记录
   const raw = await db.execute(sql`
     SELECT id, action, coinAmount, coinType, senderId, receiverId, reason, transactionDate
     FROM wx_coins_transactions
-    WHERE senderId = ${OFFICIAL_OPENID} OR receiverId = ${OFFICIAL_OPENID}
+    WHERE senderId = ${OFFICIAL_ID} OR receiverId = ${OFFICIAL_ID}
     ORDER BY transactionDate DESC
     LIMIT 30
   `);
