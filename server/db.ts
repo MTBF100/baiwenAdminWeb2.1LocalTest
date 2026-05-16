@@ -492,7 +492,28 @@ export async function getScreenUserGrowth(selectedMonth?: string) {
     GROUP BY day_label
     ORDER BY day_label ASC
   `);
-  const monthly = (raw[0] as unknown as any[]).map((r: any) => ({ month: r.day_label as string, count: Number(r.cnt) }));
+  const dataMap = new Map<string, number>();
+  for (const r of (raw[0] as unknown as any[])) {
+    dataMap.set(r.day_label as string, Number(r.cnt));
+  }
+  // 补全该月所有日期（从1号到最后一天或今天）
+  const [yearStr, monthStr] = peakMonth.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const now = new Date();
+  const nowUtc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const currentYear = nowUtc8.getUTCFullYear();
+  const currentMonth = nowUtc8.getUTCMonth() + 1;
+  const currentDay = nowUtc8.getUTCDate();
+  // 如果是当前月份，截止到今天；否则截止到该月最后一天
+  const lastDay = (year === currentYear && month === currentMonth)
+    ? currentDay
+    : new Date(year, month, 0).getDate();
+  const monthly: { month: string; count: number }[] = [];
+  for (let d = 1; d <= lastDay; d++) {
+    const label = `${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    monthly.push({ month: label, count: dataMap.get(label) ?? 0 });
+  }
   return { monthly, peakMonth, availableMonths };
 }
 
@@ -501,12 +522,13 @@ export async function getScreenAiActivity() {
   const db = await getDb();
   if (!db) return { todayCount: 0, totalCount: 0, recentQuestions: [] };
   const [totalResult] = await db.select({ count: count() }).from(wxMessages);
-  // 使用 UTC+8 时区的今日零点（微信数据均为中国时间）
-  const now = new Date();
-  const utc8Now = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const todayStr = utc8Now.toISOString().slice(0, 10); // YYYY-MM-DD in UTC+8
-  const todayStart = new Date(todayStr + 'T00:00:00+08:00');
-  const [todayResult] = await db.select({ count: count() }).from(wxMessages).where(gte(wxMessages.createdAt, todayStart));
+  // 使用 MySQL DATE 函数直接比较，避免 JS/MySQL 时区转换问题
+  // MySQL timestamp 存储的是 UTC，但 CONVERT_TZ 可以转换为中国时间比较
+  const todayCountRaw = await db.execute(sql`
+    SELECT COUNT(*) as cnt FROM wx_messages
+    WHERE DATE(CONVERT_TZ(createdAt, '+00:00', '+08:00')) = DATE(CONVERT_TZ(NOW(), '+00:00', '+08:00'))
+  `);
+  const todayResult = { count: Number((todayCountRaw[0] as unknown as any[])[0]?.cnt ?? 0) };
   // content = 用户提问，senderNick = AI 回复（ETL 临时借用）
   // 取 50 条以保证弹幕内容充足
   const recentRaw = await db.select({

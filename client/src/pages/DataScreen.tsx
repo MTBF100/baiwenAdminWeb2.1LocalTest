@@ -664,7 +664,7 @@ export default function DataScreen() {
         {/* ── 中央栏 ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
           {/* 气泡图 */}
-          <Panel title="文章热力图（气泡大小 = 浏览量，颜色 = 点赞率）" className="flex-1">
+          <Panel title="文章热力图" className="flex-1">
             <ReactECharts
               option={bubbleOption}
               style={{ height: "100%", minHeight: 200 }}
