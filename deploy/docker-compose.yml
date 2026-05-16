@@ -1,0 +1,81 @@
+version: '3.8'
+services:
+  # MySQL 数据库服务
+  mysql:
+    image: mysql:8.0
+    container_name: baiwen-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-BaiWen@2024!}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-baiwen_admin}
+      MYSQL_USER: ${MYSQL_USER:-baiwen}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-BaiWen@2024!}
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d
+      - ./mysql/conf/my.cnf:/etc/mysql/conf.d/custom.cnf
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - baiwen-network
+  # Redis 缓存服务
+  redis:
+    image: redis:7-alpine
+    container_name: baiwen-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - baiwen-network
+  # Node.js 应用服务
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: baiwen-app
+    restart: always
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER:-baiwen}:${MYSQL_PASSWORD:-BaiWen@2024!}@mysql:3306/${MYSQL_DATABASE:-baiwen_admin}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_INIT_SECRET: ${ADMIN_INIT_SECRET}
+      WX_CLOUD_ENV: ${WX_CLOUD_ENV}
+      WX_CLOUD_APPID: ${WX_CLOUD_APPID}
+      WX_CLOUD_SECRET: ${WX_CLOUD_SECRET}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - baiwen-network
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  baiwen-network:
+    driver: bridge
