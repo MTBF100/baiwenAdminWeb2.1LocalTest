@@ -654,6 +654,14 @@ export default function DataScreen() {
                   {" / "}
                   <span style={{ color: TEXT_MAIN }}>{fmt(ai?.totalCount)}</span>
                 </div>
+                {/* 临时调试信息，确认后删除 */}
+                {(ai as any)?.debugAi && (
+                  <div style={{ fontSize: 8, color: '#666', marginTop: 2, textAlign: 'center', lineHeight: 1.3 }}>
+                    <div>最新记录: {(ai as any).debugAi.latestCreatedAt}</div>
+                    <div>今日范围: {(ai as any).debugAi.todayStartUtc?.slice(0,19)}</div>
+                    <div>~{(ai as any).debugAi.tomorrowStartUtc?.slice(0,19)}</div>
+                  </div>
+                )}
               </div>
               {/* 问答配对自动流动弹幕 */}
               <AiChatScroller questions={ai?.recentQuestions ?? []} />

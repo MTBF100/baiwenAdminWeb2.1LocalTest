@@ -484,11 +484,11 @@ export async function getScreenUserGrowth(selectedMonth?: string) {
   const peakMonth = selectedMonth && availableMonths.some(m => m.month === selectedMonth)
     ? selectedMonth
     : availableMonths[0].month;
-  // 按日展开该月注册曲线
+  // 从选中月份开始，一直查询到今天的注册数据
   const raw = await db.execute(sql`
-    SELECT DATE_FORMAT(createdAt, '%m-%d') as day_label, COUNT(*) as cnt
+    SELECT DATE_FORMAT(createdAt, '%Y-%m-%d') as day_label, COUNT(*) as cnt
     FROM wx_users
-    WHERE DATE_FORMAT(createdAt, '%Y-%m') = ${peakMonth}
+    WHERE DATE_FORMAT(createdAt, '%Y-%m') >= ${peakMonth}
     GROUP BY day_label
     ORDER BY day_label ASC
   `);
@@ -496,23 +496,20 @@ export async function getScreenUserGrowth(selectedMonth?: string) {
   for (const r of (raw[0] as unknown as any[])) {
     dataMap.set(r.day_label as string, Number(r.cnt));
   }
-  // 补全该月所有日期（从1号到最后一天或今天）
+  // 从选中月份的1号补全到今天（跨月）
   const [yearStr, monthStr] = peakMonth.split('-');
-  const year = Number(yearStr);
-  const month = Number(monthStr);
+  const startDate = new Date(Number(yearStr), Number(monthStr) - 1, 1); // 选中月份1号
   const now = new Date();
   const nowUtc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const currentYear = nowUtc8.getUTCFullYear();
-  const currentMonth = nowUtc8.getUTCMonth() + 1;
-  const currentDay = nowUtc8.getUTCDate();
-  // 如果是当前月份，截止到今天；否则截止到该月最后一天
-  const lastDay = (year === currentYear && month === currentMonth)
-    ? currentDay
-    : new Date(year, month, 0).getDate();
+  const todayStr = nowUtc8.toISOString().slice(0, 10); // YYYY-MM-DD in UTC+8
+  const endDate = new Date(todayStr); // 今天 UTC+8
   const monthly: { month: string; count: number }[] = [];
-  for (let d = 1; d <= lastDay; d++) {
-    const label = `${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    monthly.push({ month: label, count: dataMap.get(label) ?? 0 });
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    const ymd = cursor.toISOString().slice(0, 10); // YYYY-MM-DD
+    const label = ymd.slice(5); // MM-DD
+    monthly.push({ month: label, count: dataMap.get(ymd) ?? 0 });
+    cursor.setDate(cursor.getDate() + 1);
   }
   return { monthly, peakMonth, availableMonths };
 }
@@ -522,13 +519,30 @@ export async function getScreenAiActivity() {
   const db = await getDb();
   if (!db) return { todayCount: 0, totalCount: 0, recentQuestions: [] };
   const [totalResult] = await db.select({ count: count() }).from(wxMessages);
-  // 使用 MySQL DATE 函数直接比较，避免 JS/MySQL 时区转换问题
-  // MySQL timestamp 存储的是 UTC，但 CONVERT_TZ 可以转换为中国时间比较
+  // 计算 UTC+8 今日零点的 UTC 时间，直接用字符串构造避免时区问题
+  const now = new Date();
+  const utc8Ms = now.getTime() + 8 * 3600_000;
+  const utc8Str = new Date(utc8Ms).toISOString().slice(0, 10); // YYYY-MM-DD in UTC+8
+  // UTC+8 今日零点 = 该日期的 00:00 UTC+8 = 该日期前一天 16:00 UTC
+  const todayStartUtc = new Date(utc8Str + 'T00:00:00+08:00'); // 自动转为 UTC
+  const tomorrowStartUtc = new Date(todayStartUtc.getTime() + 86400_000);
+  // 直接用 BETWEEN 比较 UTC 时间戳，不依赖 CONVERT_TZ
   const todayCountRaw = await db.execute(sql`
     SELECT COUNT(*) as cnt FROM wx_messages
-    WHERE DATE(CONVERT_TZ(createdAt, '+00:00', '+08:00')) = DATE(CONVERT_TZ(NOW(), '+00:00', '+08:00'))
+    WHERE createdAt >= ${todayStartUtc} AND createdAt < ${tomorrowStartUtc}
   `);
   const todayResult = { count: Number((todayCountRaw[0] as unknown as any[])[0]?.cnt ?? 0) };
+  // 调试信息：返回最新一条记录的 createdAt 和今日范围，便于排查
+  const latestRaw = await db.execute(sql`
+    SELECT createdAt FROM wx_messages ORDER BY createdAt DESC LIMIT 1
+  `);
+  const latestCreatedAt = (latestRaw[0] as unknown as any[])[0]?.createdAt ?? null;
+  const debugAi = {
+    todayStartUtc: todayStartUtc.toISOString(),
+    tomorrowStartUtc: tomorrowStartUtc.toISOString(),
+    latestCreatedAt: latestCreatedAt instanceof Date ? latestCreatedAt.toISOString() : String(latestCreatedAt),
+    utc8Today: utc8Str,
+  };
   // content = 用户提问，senderNick = AI 回复（ETL 临时借用）
   // 取 50 条以保证弹幕内容充足
   const recentRaw = await db.select({
@@ -545,7 +559,7 @@ export async function getScreenAiActivity() {
     nick: (m.senderId ?? '').slice(-6) || '用户',
     createdAt: m.createdAt,
   }));
-  return { todayCount: todayResult.count, totalCount: totalResult.count, recentQuestions };
+  return { todayCount: todayResult.count, totalCount: totalResult.count, recentQuestions, debugAi };
 }
 
 /** 中央主视觉：文章热力图 - 按浏览量展示各文章热度气泡（返回对数缩放值以解决两极化） */
