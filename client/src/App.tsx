@@ -6,7 +6,6 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 import DataScreen from "./pages/DataScreen";
-import Home from "./pages/Home";
 import LoginPage from "./pages/login";
 import UsersPage from "./pages/Users";
 import ArticlesPage from "./pages/Articles";
@@ -14,6 +13,14 @@ import ActivitiesPage from "./pages/Activities";
 import AnalyticsPage from "./pages/Analytics";
 import SyncPage from "./pages/Sync";
 import LogsPage from "./pages/Logs";
+
+/**
+ * 管理后台页面包装器：用 DashboardLayout 包裹子页面
+ * 不使用 wouter nest，避免相对路径匹配问题
+ */
+function AdminPage({ children }: { children: React.ReactNode }) {
+  return <DashboardLayout>{children}</DashboardLayout>;
+}
 
 function Router() {
   return (
@@ -24,21 +31,29 @@ function Router() {
       {/* 可视化数据大屏：全屏独立渲染，不走 DashboardLayout */}
       <Route path="/" component={DataScreen} />
 
-      {/* 管理后台：所有 /users /articles 等路径走 DashboardLayout 嵌套路由 */}
-      <Route path="/:rest*" nest>
-        <DashboardLayout>
-          <Switch>
-            <Route path="/users" component={UsersPage} />
-            <Route path="/articles" component={ArticlesPage} />
-            <Route path="/activities" component={ActivitiesPage} />
-            <Route path="/analytics" component={AnalyticsPage} />
-            <Route path="/sync" component={SyncPage} />
-            <Route path="/logs" component={LogsPage} />
-            <Route path="/dashboard" component={Home} />
-            <Route path="/404" component={NotFound} />
-            <Route component={NotFound} />
-          </Switch>
-        </DashboardLayout>
+      {/* 管理后台：每个路径直接匹配，不使用 nest */}
+      <Route path="/users">
+        <AdminPage><UsersPage /></AdminPage>
+      </Route>
+      <Route path="/articles">
+        <AdminPage><ArticlesPage /></AdminPage>
+      </Route>
+      <Route path="/activities">
+        <AdminPage><ActivitiesPage /></AdminPage>
+      </Route>
+      <Route path="/analytics">
+        <AdminPage><AnalyticsPage /></AdminPage>
+      </Route>
+      <Route path="/sync">
+        <AdminPage><SyncPage /></AdminPage>
+      </Route>
+      <Route path="/logs">
+        <AdminPage><LogsPage /></AdminPage>
+      </Route>
+
+      {/* 404 */}
+      <Route>
+        <AdminPage><NotFound /></AdminPage>
       </Route>
     </Switch>
   );

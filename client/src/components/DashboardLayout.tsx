@@ -133,7 +133,7 @@ function DashboardLayoutContent({
 
   const handleLogout = async () => {
     await logout();
-    setLocation("/users");
+    setLocation("/login");
   };
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";

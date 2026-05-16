@@ -291,14 +291,15 @@ export default function DataScreen() {
     tooltip: { trigger: "axis" },
   };
 
-  // 气泡图：文章分类热力
-  const maxBrowse = Math.max(...(bubble?.bubbles?.map((b) => b.totalBrowse) ?? [1]), 1);
+  // 气泡图：文章热力（使用对数缩放解决两极化）
+  const maxLogBrowse = Math.max(...(bubble?.bubbles?.map((b: any) => b.logBrowse ?? 0) ?? [1]), 1);
   const bubbleOption = {
     backgroundColor: "transparent",
     tooltip: {
       formatter: (p: any) => {
         const d = p.data;
-        return `<b>${d[3]}</b><br/>浏览: ${d[0]}<br/>点赞: ${d[1]}<br/>文章: ${d[2]}`;
+        // d: [logBrowse, logLike, articleCount, tag, totalBrowse, totalLike]
+        return `<b>${d[3]}</b><br/>浏览: ${d[4]}<br/>点赞: ${d[5]}`;
       },
     },
     xAxis: {
@@ -306,31 +307,49 @@ export default function DataScreen() {
       name: "浏览量",
       nameTextStyle: { color: TEXT_DIM, fontSize: 9 },
       splitLine: { lineStyle: { color: GRID_LINE } },
-      axisLabel: { color: TEXT_DIM, fontSize: 9 },
+      axisLabel: {
+        color: TEXT_DIM,
+        fontSize: 9,
+        formatter: (v: number) => {
+          // 对数轴转回真实值显示
+          const real = Math.round(Math.pow(10, v) - 1);
+          return real >= 1000 ? `${(real / 1000).toFixed(1)}k` : String(real);
+        },
+      },
     },
     yAxis: {
       type: "value",
       name: "点赞",
       nameTextStyle: { color: TEXT_DIM, fontSize: 9 },
       splitLine: { lineStyle: { color: GRID_LINE } },
-      axisLabel: { color: TEXT_DIM, fontSize: 9 },
+      axisLabel: {
+        color: TEXT_DIM,
+        fontSize: 9,
+        formatter: (v: number) => {
+          const real = Math.round(Math.pow(10, v) - 1);
+          return String(real);
+        },
+      },
     },
     series: [
       {
         type: "scatter",
         symbolSize: (val: number[]) =>
-          Math.max(12, Math.min(60, (val[0] / maxBrowse) * 60)),
-        data: bubble?.bubbles?.map((b) => [
-          b.totalBrowse,
-          b.totalLike,
-          b.articleCount,
-          b.tag,
+          Math.max(16, Math.min(55, (val[0] / maxLogBrowse) * 55)),
+        data: bubble?.bubbles?.map((b: any) => [
+          b.logBrowse ?? 0,   // x: 对数浏览量
+          b.logLike ?? 0,     // y: 对数点赞
+          b.articleCount,      // 文章数
+          b.tag,               // 标题
+          b.totalBrowse,       // 原始浏览量（tooltip用）
+          b.totalLike,         // 原始点赞（tooltip用）
         ]) ?? [],
         itemStyle: {
           color: (p: any) => {
-            const ratio = p.data[1] / (p.data[0] + 1);
-            const h = Math.round(180 + ratio * 60);
-            return `oklch(0.65 0.2 ${h})`;
+            // 用原始值计算点赞率颜色
+            const ratio = (p.data[5] ?? 0) / ((p.data[4] ?? 0) + 1);
+            const h = Math.round(180 + ratio * 80);
+            return `oklch(0.68 0.18 ${h})`;
           },
           opacity: 0.85,
           shadowBlur: 12,
@@ -338,9 +357,12 @@ export default function DataScreen() {
         },
         label: {
           show: true,
-          formatter: (p: any) => p.data[3],
+          formatter: (p: any) => {
+            const title = p.data[3] as string;
+            return title.length > 6 ? title.slice(0, 6) + '…' : title;
+          },
           color: TEXT_MAIN,
-          fontSize: 10,
+          fontSize: 9,
           position: "inside",
         },
       },
@@ -622,7 +644,7 @@ export default function DataScreen() {
           </Panel>
 
           {/* 流水墙 */}
-          <Panel title="平台官方账号流水动态" className="flex-none" style={{ height: 180 }}>
+          <Panel title={coins?.isOfficialOnly ? "平台官方账号流水动态" : "平台流水动态"} className="flex-none" style={{ height: 180 }}>
             {(coins?.feed ?? []).length === 0 ? (
               <div
                 style={{
@@ -647,14 +669,21 @@ export default function DataScreen() {
                   gap: 4,
                 }}
               >
-                {(coins?.feed ?? []).map((tx) => {
+                {(coins?.feed ?? []).map((tx, idx) => {
                   const OFFICIAL = '6d99dae869970b5a01151dce5b866f7c';
-                  const isOut = tx.senderId === OFFICIAL; // 官方发出
-                  const accentColor = isOut ? NEON_RED : NEON_GREEN;
-                  const dirLabel = isOut ? '发出' : '收入';
-                  const counterpart = isOut
-                    ? (tx.receiverId ?? '').slice(-6) || '用户'
-                    : (tx.senderId ?? '').slice(-6) || '用户';
+                  const isOfficialMode = coins?.isOfficialOnly ?? false;
+                  // 官方模式：区分发出/收入；通用模式：显示所有流水
+                  const isOut = isOfficialMode ? tx.senderId === OFFICIAL : false;
+                  const FEED_COLORS = [NEON, NEON2, NEON_GREEN, NEON_AMBER, "#A78BFA"];
+                  const accentColor = isOfficialMode
+                    ? (isOut ? NEON_RED : NEON_GREEN)
+                    : FEED_COLORS[idx % FEED_COLORS.length];
+                  const dirLabel = isOfficialMode
+                    ? (isOut ? '发出' : '收入')
+                    : (tx.action ?? '流水');
+                  const userLabel = isOfficialMode
+                    ? (isOut ? (tx.receiverId ?? '').slice(-6) || '用户' : (tx.senderId ?? '').slice(-6) || '用户')
+                    : ((tx.senderId ?? '').slice(-6) || '用户');
                   return (
                     <div
                       key={tx.id}
@@ -674,17 +703,14 @@ export default function DataScreen() {
                       <span style={{ fontSize: 9, color: accentColor, fontWeight: 700, flexShrink: 0, border: `1px solid ${accentColor}50`, borderRadius: 3, padding: "1px 4px" }}>
                         {dirLabel}
                       </span>
-                      <span style={{ color: TEXT_DIM, fontSize: 10 }}>
-                        {tx.action ?? '流水'}
-                      </span>
                       <span style={{ color: NEON2, fontWeight: 500 }}>
-                        {counterpart}
+                        {userLabel}
                       </span>
                       <span style={{ color: TEXT_DIM, fontSize: 10, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {tx.reason ? `· ${tx.reason}` : ''}
                       </span>
                       <span style={{ color: accentColor, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
-                        {isOut ? '-' : '+'}{tx.coinAmount ?? 0}
+                        {tx.coinAmount ?? 0}
                         <span style={{ fontSize: 9, color: TEXT_DIM, marginLeft: 2 }}>
                           {tx.coinType === 'gold' ? '金币' : '银币'}
                         </span>
