@@ -127,7 +127,6 @@ export default function DataScreen() {
   const [, setLocation] = useLocation();
   const [tick, setTick] = useState(0);
   const feedRef = useRef<HTMLDivElement>(null);
-  const [selectedMonth, setSelectedMonth] = useState<string | undefined>(undefined);
 
   // 认证守卫：未登录跳转到登录页
   useEffect(() => {
@@ -145,10 +144,7 @@ export default function DataScreen() {
   // 数据请求
   const { data: kpi } = trpc.screen.kpi.useQuery(undefined, { refetchInterval: 30_000 });
   const { data: device } = trpc.screen.deviceStats.useQuery(undefined, { refetchInterval: 60_000 });
-  const { data: growth } = trpc.screen.userGrowth.useQuery(
-    selectedMonth ? { month: selectedMonth } : undefined,
-    { refetchInterval: 60_000 }
-  );
+  const { data: growth } = trpc.screen.userGrowth.useQuery(undefined, { refetchInterval: 60_000 });
   const { data: ai } = trpc.screen.aiActivity.useQuery(undefined, { refetchInterval: 15_000 });
   const { data: bubble } = trpc.screen.articleBubble.useQuery(undefined, { refetchInterval: 60_000 });
   const { data: coins } = trpc.screen.coinsFeed.useQuery(undefined, { refetchInterval: 15_000 });
@@ -601,28 +597,6 @@ export default function DataScreen() {
 
           {/* B: 用户增长趋势 */}
           <Panel title="用户增长趋势" className="flex-1">
-            {/* 月份选择器 */}
-            {(growth?.availableMonths ?? []).length > 1 && (
-              <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
-                {growth!.availableMonths.map((m: any) => (
-                  <button
-                    key={m.month}
-                    onClick={() => setSelectedMonth(m.month)}
-                    style={{
-                      padding: '2px 8px',
-                      fontSize: 9,
-                      borderRadius: 4,
-                      border: `1px solid ${(growth?.peakMonth === m.month) ? NEON : BORDER}`,
-                      background: (growth?.peakMonth === m.month) ? `${NEON}20` : 'transparent',
-                      color: (growth?.peakMonth === m.month) ? NEON : TEXT_DIM,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {m.month}({m.count})
-                  </button>
-                ))}
-              </div>
-            )}
             <ReactECharts
               option={growthOption}
               style={{ height: "100%", minHeight: 100 }}

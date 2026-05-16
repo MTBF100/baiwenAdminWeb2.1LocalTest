@@ -1,8 +1,8 @@
-version: '3.8'
 services:
   # MySQL 数据库服务
   mysql:
-    image: mysql:8.0
+    build:
+      context: ./mysql
     container_name: baiwen-mysql
     restart: always
     environment:
@@ -16,7 +16,6 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./mysql/init:/docker-entrypoint-initdb.d
-      - ./mysql/conf/my.cnf:/etc/mysql/conf.d/custom.cnf
     command: --default-authentication-plugin=mysql_native_password
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -27,14 +26,14 @@ services:
       - baiwen-network
   # Redis 缓存服务
   redis:
-    image: redis:7-alpine
+    build:
+      context: ./redis
     container_name: baiwen-redis
     restart: always
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
     command: redis-server /usr/local/etc/redis/redis.conf
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

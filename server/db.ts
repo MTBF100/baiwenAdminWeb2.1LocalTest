@@ -465,53 +465,43 @@ export async function getScreenDeviceStats() {
   return { osDist, top5Models };
 }
 
-/** 左侧 B：用户增长趋势 - 支持月份参数，默认峰值月 */
-export async function getScreenUserGrowth(selectedMonth?: string) {
+/** 左侧 B：用户增长趋势 — 固定展示最近 6 个月，按月聚合，无增长则为 0 */
+export async function getScreenUserGrowth() {
   const db = await getDb();
-  if (!db) return { monthly: [], peakMonth: '', availableMonths: [] };
-  // 查询所有有数据的月份（供前端下拉选择）
-  const allMonthsRaw = await db.execute(sql`
-    SELECT DATE_FORMAT(createdAt, '%Y-%m') as ym, COUNT(*) as cnt
+  if (!db) return { monthly: [] };
+
+  // 计算最近 6 个月（含本月）
+  const nowUtc8 = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const currentMonth = nowUtc8.toISOString().slice(0, 7); // YYYY-MM
+
+  const raw = await db.execute(sql`
+    SELECT DATE_FORMAT(createdAt, '%Y-%m') as month_label, COUNT(*) as cnt
     FROM wx_users
     WHERE createdAt IS NOT NULL
-    GROUP BY ym
-    ORDER BY cnt DESC
-  `);
-  const allMonthRows = allMonthsRaw[0] as unknown as any[];
-  const availableMonths = (allMonthRows ?? []).map((r: any) => ({ month: r.ym as string, count: Number(r.cnt) }));
-  if (availableMonths.length === 0) return { monthly: [], peakMonth: '', availableMonths: [] };
-  // 确定当前展示月份：优先用户选择 > 峰值月
-  const peakMonth = selectedMonth && availableMonths.some(m => m.month === selectedMonth)
-    ? selectedMonth
-    : availableMonths[0].month;
-  // 从选中月份开始，一直查询到今天的注册数据
-  const raw = await db.execute(sql`
-    SELECT DATE_FORMAT(createdAt, '%Y-%m-%d') as day_label, COUNT(*) as cnt
-    FROM wx_users
-    WHERE DATE_FORMAT(createdAt, '%Y-%m') >= ${peakMonth}
-    GROUP BY day_label
-    ORDER BY day_label ASC
+    GROUP BY month_label
+    ORDER BY month_label ASC
   `);
   const dataMap = new Map<string, number>();
   for (const r of (raw[0] as unknown as any[])) {
-    dataMap.set(r.day_label as string, Number(r.cnt));
+    dataMap.set(r.month_label as string, Number(r.cnt));
   }
-  // 从选中月份的1号补全到今天（跨月）
-  const [yearStr, monthStr] = peakMonth.split('-');
-  const startDate = new Date(Number(yearStr), Number(monthStr) - 1, 1); // 选中月份1号
-  const now = new Date();
-  const nowUtc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const todayStr = nowUtc8.toISOString().slice(0, 10); // YYYY-MM-DD in UTC+8
-  const endDate = new Date(todayStr); // 今天 UTC+8
-  const monthly: { month: string; count: number }[] = [];
-  const cursor = new Date(startDate);
-  while (cursor <= endDate) {
-    const ymd = cursor.toISOString().slice(0, 10); // YYYY-MM-DD
-    const label = ymd.slice(5); // MM-DD
-    monthly.push({ month: label, count: dataMap.get(ymd) ?? 0 });
-    cursor.setDate(cursor.getDate() + 1);
+
+  // 生成最近 6 个月的标签（不含本月 → 往前推 5 个月）
+  const months: string[] = [];
+  for (let i = 5; i >= 1; i--) {
+    const d = new Date(nowUtc8);
+    d.setMonth(d.getMonth() - i);
+    months.push(d.toISOString().slice(0, 7));
   }
-  return { monthly, peakMonth, availableMonths };
+  // 加上本月
+  months.push(currentMonth);
+
+  const monthly: { month: string; count: number }[] = months.map((m) => ({
+    month: m.slice(5) + '月', // "11月" 格式
+    count: dataMap.get(m) ?? 0,
+  }));
+
+  return { monthly };
 }
 
 /** 左侧 C：松果 AI 助手活跃度（问答配对） */

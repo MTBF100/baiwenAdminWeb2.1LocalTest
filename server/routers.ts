@@ -572,9 +572,7 @@ wxUsers: router({
   screen: router({
     kpi: adminProcedure.query(async () => db.getScreenKpi()),
     deviceStats: adminProcedure.query(async () => db.getScreenDeviceStats()),
-    userGrowth: adminProcedure
-      .input(z.object({ month: z.string().optional() }).optional())
-      .query(async ({ input }) => db.getScreenUserGrowth(input?.month)),
+    userGrowth: adminProcedure.query(async () => db.getScreenUserGrowth()),
     aiActivity: adminProcedure.query(async () => db.getScreenAiActivity()),
     articleBubble: adminProcedure.query(async () => db.getScreenArticleBubble()),
     coinsFeed: adminProcedure.query(async () => db.getScreenCoinsFeed()),
