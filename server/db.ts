@@ -427,29 +427,65 @@ export async function getScreenKpi() {
   const [articleCount] = await db.select({ count: count() }).from(wxArticles);
   const pvResult = await db.execute(sql`SELECT COALESCE(SUM(viewCount),0) as pv FROM wx_articles`);
   const coinsResult = await db.execute(sql`SELECT COALESCE(SUM(coinAmount),0) as coins FROM wx_coins_transactions`);
-  const totalPv = Number((pvResult[0] as any[])[0]?.pv ?? 0);
-  const totalCoins = Number((coinsResult[0] as any[])[0]?.coins ?? 0);
+  const totalPv = Number((pvResult[0] as unknown as any[])[0]?.pv ?? 0);
+  const totalCoins = Number((coinsResult[0] as unknown as any[])[0]?.coins ?? 0);
   return { userCount: userCount.count, articleCount: articleCount.count, totalPv, totalCoins };
 }
 
-/** 左侧 A：用户设备生态 - iOS/Android 占比 + Top5 机型 */
+/** 左侧 A：用户生态 - 银币活跃度分层（替代设备OS，因 system/phoneModel 字段数据为空）+ Top5 注册月份 */
 export async function getScreenDeviceStats() {
   const db = await getDb();
   if (!db) return { osDist: [], top5Models: [] };
-  const osRaw = await db.execute(sql`SELECT system, COUNT(*) as cnt FROM wx_users WHERE system IS NOT NULL AND system != '' GROUP BY system ORDER BY cnt DESC`);
-  const modelRaw = await db.execute(sql`SELECT phoneModel, COUNT(*) as cnt FROM wx_users WHERE phoneModel IS NOT NULL AND phoneModel != '' GROUP BY phoneModel ORDER BY cnt DESC LIMIT 5`);
-  const osDist = (osRaw[0] as any[]).map((r: any) => ({ name: r.system as string, value: Number(r.cnt) }));
-  const top5Models = (modelRaw[0] as any[]).map((r: any) => ({ model: r.phoneModel as string, count: Number(r.cnt) }));
+  // 用银币区间划分用户活跃层级（silver_coin → silverCoin）
+  const osRaw = await db.execute(sql`
+    SELECT
+      CASE
+        WHEN silverCoin = 0 THEN '未活跃'
+        WHEN silverCoin BETWEEN 1 AND 10 THEN '初级活跃'
+        WHEN silverCoin BETWEEN 11 AND 50 THEN '中级活跃'
+        WHEN silverCoin BETWEEN 51 AND 200 THEN '高级活跃'
+        ELSE '核心用户'
+      END as name,
+      COUNT(*) as cnt
+    FROM wx_users
+    GROUP BY name
+    ORDER BY cnt DESC
+  `);
+  // Top5 注册月份（按月统计注册人数）
+  const modelRaw = await db.execute(sql`
+    SELECT DATE_FORMAT(createdAt, '%Y-%m') as model, COUNT(*) as cnt
+    FROM wx_users
+    GROUP BY model
+    ORDER BY cnt DESC
+    LIMIT 5
+  `);
+  const osDist = (osRaw[0] as unknown as any[]).map((r: any) => ({ name: r.name as string, value: Number(r.cnt) }));
+  const top5Models = (modelRaw[0] as unknown as any[]).map((r: any) => ({ model: r.model as string, count: Number(r.cnt) }));
   return { osDist, top5Models };
 }
 
-/** 左侧 B：用户增长趋势 - 按月注册曲线（近12个月） */
+/** 左侧 B：用户增长趋势 - 当月按日注册曲线（数据集中在3月，按日展示更有意义） */
 export async function getScreenUserGrowth() {
   const db = await getDb();
   if (!db) return { monthly: [] };
-  const raw = await db.execute(sql`SELECT DATE_FORMAT(createdAt, '%Y-%m') as month, COUNT(*) as cnt FROM wx_users GROUP BY month ORDER BY month ASC LIMIT 12`);
-  const monthly = (raw[0] as any[]).map((r: any) => ({ month: r.month as string, count: Number(r.cnt) }));
-  return { monthly };
+  // 查询数据量最多的那个月，再按日展开
+  const peakMonthRaw = await db.execute(sql`
+    SELECT DATE_FORMAT(createdAt, '%Y-%m') as month, COUNT(*) as cnt
+    FROM wx_users
+    GROUP BY month
+    ORDER BY cnt DESC
+    LIMIT 1
+  `);
+  const peakMonth: string = ((peakMonthRaw[0] as unknown as any[])[0]?.month as string) ?? new Date().toISOString().slice(0, 7);
+  const raw = await db.execute(sql`
+    SELECT DATE_FORMAT(createdAt, '%m-%d') as month, COUNT(*) as cnt
+    FROM wx_users
+    WHERE DATE_FORMAT(createdAt, '%Y-%m') = ${peakMonth}
+    GROUP BY DATE_FORMAT(createdAt, '%Y-%m-%d')
+    ORDER BY DATE_FORMAT(createdAt, '%Y-%m-%d') ASC
+  `);
+  const monthly = (raw[0] as unknown as any[]).map((r: any) => ({ month: r.month as string, count: Number(r.cnt) }));
+  return { monthly, peakMonth };
 }
 
 /** 左侧 C：松果 AI 助手活跃度 */
@@ -465,22 +501,55 @@ export async function getScreenAiActivity() {
   return { todayCount: todayResult.count, totalCount: totalResult.count, recentQuestions };
 }
 
-/** 中央主视觉：文章分类气泡图 */
+/** 中央主视觉：文章热力图 - 按浏览量展示各文章热度气泡 */
 export async function getScreenArticleBubble() {
   const db = await getDb();
   if (!db) return { bubbles: [] };
-  // wx_articles 表无 tag 字段，改用 author 分组展示各作者内容热力
-  const raw = await db.execute(sql`SELECT COALESCE(NULLIF(TRIM(author),''), '匿名作者') as tag, COUNT(*) as articleCount, COALESCE(SUM(viewCount),0) as totalBrowse, COALESCE(SUM(likeCount),0) as totalLike FROM wx_articles GROUP BY author ORDER BY totalBrowse DESC LIMIT 20`);
-  const bubbles = (raw[0] as any[]).map((r: any) => ({ tag: r.tag as string, articleCount: Number(r.articleCount), totalBrowse: Number(r.totalBrowse), totalLike: Number(r.totalLike) }));
+  // 直接用文章标题作为气泡标签，气泡大小=浏览量，颜色=点赞率
+  const raw = await db.execute(sql`
+    SELECT
+      COALESCE(NULLIF(TRIM(title),''), '无标题') as tag,
+      1 as articleCount,
+      COALESCE(viewCount, 0) as totalBrowse,
+      COALESCE(likeCount, 0) as totalLike
+    FROM wx_articles
+    WHERE status = 'approved'
+    ORDER BY viewCount DESC
+    LIMIT 30
+  `);
+  const bubbles = (raw[0] as unknown as any[]).map((r: any) => ({
+    tag: r.tag as string,
+    articleCount: Number(r.articleCount),
+    totalBrowse: Number(r.totalBrowse),
+    totalLike: Number(r.totalLike),
+  }));
   return { bubbles };
 }
 
-/** 中央底部：打赏流水墙 */
+/** 中央底部：平台官方账号流水墙（senderId 或 receiverId = 官方 openid） */
 export async function getScreenCoinsFeed() {
   const db = await getDb();
   if (!db) return { feed: [] };
-  const raw = await db.select({ id: wxCoinsTransactions.id, action: wxCoinsTransactions.action, coinAmount: wxCoinsTransactions.coinAmount, coinType: wxCoinsTransactions.coinType, senderId: wxCoinsTransactions.senderId, receiverId: wxCoinsTransactions.receiverId, reason: wxCoinsTransactions.reason, transactionDate: wxCoinsTransactions.transactionDate }).from(wxCoinsTransactions).orderBy(desc(wxCoinsTransactions.transactionDate)).limit(20);
-  return { feed: raw };
+  const OFFICIAL_OPENID = 'osQsQ7bWKowC7xczUVFuWQcF-eTI';
+  // 查询官方账号作为发送方或接收方的流水记录
+  const raw = await db.execute(sql`
+    SELECT id, action, coinAmount, coinType, senderId, receiverId, reason, transactionDate
+    FROM wx_coins_transactions
+    WHERE senderId = ${OFFICIAL_OPENID} OR receiverId = ${OFFICIAL_OPENID}
+    ORDER BY transactionDate DESC
+    LIMIT 30
+  `);
+  const feed = (raw[0] as unknown as any[]).map((r: any) => ({
+    id: Number(r.id),
+    action: r.action as string,
+    coinAmount: Number(r.coinAmount),
+    coinType: r.coinType as string,
+    senderId: r.senderId as string,
+    receiverId: r.receiverId as string,
+    reason: r.reason as string,
+    transactionDate: r.transactionDate != null ? Number(r.transactionDate) : null,
+  }));
+  return { feed };
 }
 
 /** 右侧 D：热门文章排行榜 Top5 */

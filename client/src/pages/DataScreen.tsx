@@ -260,7 +260,7 @@ export default function DataScreen() {
     grid: { top: 10, bottom: 24, left: 8, right: 8, containLabel: true },
     xAxis: {
       type: "category",
-      data: growth?.monthly?.map((m) => m.month.slice(5)) ?? [],
+      data: growth?.monthly?.map((m) => m.month) ?? [],
       axisLabel: { color: TEXT_DIM, fontSize: 9 },
       axisLine: { lineStyle: { color: BORDER } },
       axisTick: { show: false },
@@ -553,8 +553,8 @@ export default function DataScreen() {
       >
         {/* ── 左侧栏 ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
-          {/* A: 设备生态 */}
-          <Panel title="用户设备生态" className="flex-none" style={{ height: 220 }}>
+          {/* A: 用户活跃分层 */}
+          <Panel title="用户活跃度分层" className="flex-none" style={{ height: 220 }}>
             <ReactECharts
               option={osOption}
               style={{ height: 140 }}
@@ -562,8 +562,8 @@ export default function DataScreen() {
             />
           </Panel>
 
-          {/* Top5 机型 */}
-          <Panel title="Top 5 手机机型" className="flex-none" style={{ height: 160 }}>
+          {/* Top5 注册月份 */}
+          <Panel title="Top 5 注册高峰月份" className="flex-none" style={{ height: 160 }}>
             <ReactECharts
               option={modelOption}
               style={{ height: 120 }}
@@ -572,7 +572,7 @@ export default function DataScreen() {
           </Panel>
 
           {/* B: 用户增长趋势 */}
-          <Panel title="用户增长趋势（近12月）" className="flex-1">
+          <Panel title={`用户增长趋势（${growth?.peakMonth ?? ''}）`} className="flex-1">
             <ReactECharts
               option={growthOption}
               style={{ height: "100%", minHeight: 100 }}
@@ -619,24 +619,30 @@ export default function DataScreen() {
                 <div style={{ fontSize: 10, color: TEXT_DIM, marginBottom: 2 }}>
                   最新提问
                 </div>
-                {(ai?.recentQuestions ?? []).slice(0, 5).map((q) => (
-                  <div
-                    key={q.id}
-                    style={{
-                      fontSize: 10,
-                      color: TEXT_MAIN,
-                      background: "rgba(0,242,254,0.05)",
-                      borderRadius: 4,
-                      padding: "3px 6px",
-                      borderLeft: `2px solid ${NEON}60`,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    <span style={{ color: NEON2 }}>{q.nick}</span>: {q.preview}…
-                  </div>
-                ))}
+                {(ai?.recentQuestions ?? []).slice(0, 5).map((q, i) => {
+                  const BUBBLE_COLORS = [NEON, NEON2, NEON_GREEN, NEON_AMBER, "#A78BFA"];
+                  const c = BUBBLE_COLORS[i % BUBBLE_COLORS.length];
+                  return (
+                    <div
+                      key={q.id}
+                      style={{
+                        fontSize: 10,
+                        color: TEXT_MAIN,
+                        background: `${c}08`,
+                        borderRadius: 4,
+                        padding: "3px 6px",
+                        borderLeft: `2px solid ${c}70`,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      <span style={{ color: c, fontWeight: 600 }}>{q.nick}</span>
+                      <span style={{ color: TEXT_DIM, margin: "0 4px" }}>:</span>
+                      <span style={{ color: TEXT_MAIN }}>{q.preview}…</span>
+                    </div>
+                  );
+                })}
                 {(ai?.recentQuestions ?? []).length === 0 && (
                   <div style={{ fontSize: 10, color: TEXT_DIM }}>暂无数据</div>
                 )}
@@ -648,7 +654,7 @@ export default function DataScreen() {
         {/* ── 中央栏 ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10, minHeight: 0 }}>
           {/* 气泡图 */}
-          <Panel title="作者内容热力图（气泡大小 = 浏览量，颜色 = 点赞率）" className="flex-1">
+          <Panel title="文章热力图（气泡大小 = 浏览量，颜色 = 点赞率）" className="flex-1">
             <ReactECharts
               option={bubbleOption}
               style={{ height: "100%", minHeight: 200 }}
@@ -657,7 +663,7 @@ export default function DataScreen() {
           </Panel>
 
           {/* 流水墙 */}
-          <Panel title="打赏流水实时动态" className="flex-none" style={{ height: 180 }}>
+          <Panel title="平台官方账号流水动态" className="flex-none" style={{ height: 180 }}>
             {(coins?.feed ?? []).length === 0 ? (
               <div
                 style={{
@@ -682,56 +688,51 @@ export default function DataScreen() {
                   gap: 4,
                 }}
               >
-                {(coins?.feed ?? []).map((tx) => (
-                  <div
-                    key={tx.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "4px 8px",
-                      borderRadius: 4,
-                      background: "rgba(0,242,254,0.04)",
-                      borderLeft: `2px solid ${NEON_AMBER}60`,
-                      fontSize: 11,
-                      color: TEXT_MAIN,
-                      flexShrink: 0,
-                    }}
-                  >
-                    <span
+                {(coins?.feed ?? []).map((tx) => {
+                  const OFFICIAL = 'osQsQ7bWKowC7xczUVFuWQcF-eTI';
+                  const isOut = tx.senderId === OFFICIAL; // 官方发出
+                  const accentColor = isOut ? NEON_RED : NEON_GREEN;
+                  const dirLabel = isOut ? '发出' : '收入';
+                  const counterpart = isOut
+                    ? (tx.receiverId ?? '').slice(-6) || '用户'
+                    : (tx.senderId ?? '').slice(-6) || '用户';
+                  return (
+                    <div
+                      key={tx.id}
                       style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: "50%",
-                        background: NEON_AMBER,
-                        boxShadow: `0 0 4px ${NEON_AMBER}`,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        background: `${accentColor}06`,
+                        borderLeft: `2px solid ${accentColor}60`,
+                        fontSize: 11,
+                        color: TEXT_MAIN,
                         flexShrink: 0,
                       }}
-                    />
-                    <span style={{ color: NEON2, fontWeight: 500 }}>
-                      {(tx.senderId ?? "").slice(-6) || "用户"}
-                    </span>
-                    <span style={{ color: TEXT_DIM }}>
-                      {tx.action ?? "打赏"}了
-                    </span>
-                    <span style={{ color: NEON2, fontWeight: 500 }}>
-                      {(tx.receiverId ?? "").slice(-6) || "用户"}
-                    </span>
-                    <span
-                      style={{
-                        marginLeft: "auto",
-                        color: NEON_AMBER,
-                        fontWeight: 700,
-                        fontSize: 13,
-                      }}
                     >
-                      +{tx.coinAmount ?? 0}
-                      <span style={{ fontSize: 9, color: TEXT_DIM, marginLeft: 2 }}>
-                        {tx.coinType === "gold" ? "金币" : "银币"}
+                      <span style={{ fontSize: 9, color: accentColor, fontWeight: 700, flexShrink: 0, border: `1px solid ${accentColor}50`, borderRadius: 3, padding: "1px 4px" }}>
+                        {dirLabel}
                       </span>
-                    </span>
-                  </div>
-                ))}
+                      <span style={{ color: TEXT_DIM, fontSize: 10 }}>
+                        {tx.action ?? '流水'}
+                      </span>
+                      <span style={{ color: NEON2, fontWeight: 500 }}>
+                        {counterpart}
+                      </span>
+                      <span style={{ color: TEXT_DIM, fontSize: 10, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {tx.reason ? `· ${tx.reason}` : ''}
+                      </span>
+                      <span style={{ color: accentColor, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                        {isOut ? '-' : '+'}{tx.coinAmount ?? 0}
+                        <span style={{ fontSize: 9, color: TEXT_DIM, marginLeft: 2 }}>
+                          {tx.coinType === 'gold' ? '金币' : '银币'}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Panel>
