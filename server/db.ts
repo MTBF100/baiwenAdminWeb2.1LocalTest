@@ -414,3 +414,87 @@ export async function bulkUpsertWxCoinsTransactions(records: InsertWxCoinsTransa
   }
   return synced;
 }
+
+// ============================================================
+// 可视化大屏专用查询函数 (DataScreen)
+// ============================================================
+
+/** 顶部 KPI：累计注册用户数、平台文章总数、全站总浏览量、打赏流通总额 */
+export async function getScreenKpi() {
+  const db = await getDb();
+  if (!db) return { userCount: 0, articleCount: 0, totalPv: 0, totalCoins: 0 };
+  const [userCount] = await db.select({ count: count() }).from(wxUsers);
+  const [articleCount] = await db.select({ count: count() }).from(wxArticles);
+  const pvResult = await db.execute(sql`SELECT COALESCE(SUM(viewCount),0) as pv FROM wx_articles`);
+  const coinsResult = await db.execute(sql`SELECT COALESCE(SUM(coinAmount),0) as coins FROM wx_coins_transactions`);
+  const totalPv = Number((pvResult[0] as any[])[0]?.pv ?? 0);
+  const totalCoins = Number((coinsResult[0] as any[])[0]?.coins ?? 0);
+  return { userCount: userCount.count, articleCount: articleCount.count, totalPv, totalCoins };
+}
+
+/** 左侧 A：用户设备生态 - iOS/Android 占比 + Top5 机型 */
+export async function getScreenDeviceStats() {
+  const db = await getDb();
+  if (!db) return { osDist: [], top5Models: [] };
+  const osRaw = await db.execute(sql`SELECT system, COUNT(*) as cnt FROM wx_users WHERE system IS NOT NULL AND system != '' GROUP BY system ORDER BY cnt DESC`);
+  const modelRaw = await db.execute(sql`SELECT phoneModel, COUNT(*) as cnt FROM wx_users WHERE phoneModel IS NOT NULL AND phoneModel != '' GROUP BY phoneModel ORDER BY cnt DESC LIMIT 5`);
+  const osDist = (osRaw[0] as any[]).map((r: any) => ({ name: r.system as string, value: Number(r.cnt) }));
+  const top5Models = (modelRaw[0] as any[]).map((r: any) => ({ model: r.phoneModel as string, count: Number(r.cnt) }));
+  return { osDist, top5Models };
+}
+
+/** 左侧 B：用户增长趋势 - 按月注册曲线（近12个月） */
+export async function getScreenUserGrowth() {
+  const db = await getDb();
+  if (!db) return { monthly: [] };
+  const raw = await db.execute(sql`SELECT DATE_FORMAT(createdAt, '%Y-%m') as month, COUNT(*) as cnt FROM wx_users GROUP BY month ORDER BY month ASC LIMIT 12`);
+  const monthly = (raw[0] as any[]).map((r: any) => ({ month: r.month as string, count: Number(r.cnt) }));
+  return { monthly };
+}
+
+/** 左侧 C：松果 AI 助手活跃度 */
+export async function getScreenAiActivity() {
+  const db = await getDb();
+  if (!db) return { todayCount: 0, totalCount: 0, recentQuestions: [] };
+  const [totalResult] = await db.select({ count: count() }).from(wxMessages);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const [todayResult] = await db.select({ count: count() }).from(wxMessages).where(gte(wxMessages.createdAt, todayStart));
+  const recentRaw = await db.select({ id: wxMessages.id, content: wxMessages.content, senderId: wxMessages.senderId, createdAt: wxMessages.createdAt }).from(wxMessages).orderBy(desc(wxMessages.createdAt)).limit(10);
+  // content = 用户提问，senderNick 实际存的是 AI 回复，展示时用 senderId 尾部作为标识
+  const recentQuestions = recentRaw.map(m => ({ id: m.id, preview: (m.content ?? '').slice(0, 20), nick: (m.senderId ?? '').slice(-6) || '用户', createdAt: m.createdAt }));
+  return { todayCount: todayResult.count, totalCount: totalResult.count, recentQuestions };
+}
+
+/** 中央主视觉：文章分类气泡图 */
+export async function getScreenArticleBubble() {
+  const db = await getDb();
+  if (!db) return { bubbles: [] };
+  // wx_articles 表无 tag 字段，改用 author 分组展示各作者内容热力
+  const raw = await db.execute(sql`SELECT COALESCE(NULLIF(TRIM(author),''), '匿名作者') as tag, COUNT(*) as articleCount, COALESCE(SUM(viewCount),0) as totalBrowse, COALESCE(SUM(likeCount),0) as totalLike FROM wx_articles GROUP BY author ORDER BY totalBrowse DESC LIMIT 20`);
+  const bubbles = (raw[0] as any[]).map((r: any) => ({ tag: r.tag as string, articleCount: Number(r.articleCount), totalBrowse: Number(r.totalBrowse), totalLike: Number(r.totalLike) }));
+  return { bubbles };
+}
+
+/** 中央底部：打赏流水墙 */
+export async function getScreenCoinsFeed() {
+  const db = await getDb();
+  if (!db) return { feed: [] };
+  const raw = await db.select({ id: wxCoinsTransactions.id, action: wxCoinsTransactions.action, coinAmount: wxCoinsTransactions.coinAmount, coinType: wxCoinsTransactions.coinType, senderId: wxCoinsTransactions.senderId, receiverId: wxCoinsTransactions.receiverId, reason: wxCoinsTransactions.reason, transactionDate: wxCoinsTransactions.transactionDate }).from(wxCoinsTransactions).orderBy(desc(wxCoinsTransactions.transactionDate)).limit(20);
+  return { feed: raw };
+}
+
+/** 右侧 D：热门文章排行榜 Top5 */
+export async function getScreenTopArticles() {
+  const db = await getDb();
+  if (!db) return { top5: [] };
+  const raw = await db.select({ id: wxArticles.id, title: wxArticles.title, author: wxArticles.author, viewCount: wxArticles.viewCount, likeCount: wxArticles.likeCount }).from(wxArticles).orderBy(desc(wxArticles.viewCount)).limit(5);
+  return { top5: raw };
+}
+
+/** 右侧 E：活动生命周期 */
+export async function getScreenActivities() {
+  const db = await getDb();
+  if (!db) return { activities: [] };
+  const raw = await db.select({ id: wxActivities.id, name: wxActivities.name, startDate: wxActivities.startDate, endDate: wxActivities.endDate, status: wxActivities.status, statusMess: wxActivities.statusMess, posterUrl: wxActivities.posterUrl, articleResultUrl: wxActivities.articleResultUrl }).from(wxActivities).orderBy(desc(wxActivities.startDate)).limit(10);
+  return { activities: raw };
+}

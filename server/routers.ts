@@ -567,6 +567,18 @@ wxUsers: router({
         }
       }),
   }),
+
+  // 可视化大屏专用路由 (DataScreen)
+  screen: router({
+    kpi: adminProcedure.query(async () => db.getScreenKpi()),
+    deviceStats: adminProcedure.query(async () => db.getScreenDeviceStats()),
+    userGrowth: adminProcedure.query(async () => db.getScreenUserGrowth()),
+    aiActivity: adminProcedure.query(async () => db.getScreenAiActivity()),
+    articleBubble: adminProcedure.query(async () => db.getScreenArticleBubble()),
+    coinsFeed: adminProcedure.query(async () => db.getScreenCoinsFeed()),
+    topArticles: adminProcedure.query(async () => db.getScreenTopArticles()),
+    activities: adminProcedure.query(async () => db.getScreenActivities()),
+  }),
 });
 
 export type AppRouter = typeof appRouter;
