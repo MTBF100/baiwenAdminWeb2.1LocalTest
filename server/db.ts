@@ -465,23 +465,25 @@ export async function getScreenDeviceStats() {
   return { osDist, top5Models };
 }
 
-/** 左侧 B：用户增长趋势 - 数据最多的月份按日展开 */
-export async function getScreenUserGrowth() {
+/** 左侧 B：用户增长趋势 - 支持月份参数，默认峰值月 */
+export async function getScreenUserGrowth(selectedMonth?: string) {
   const db = await getDb();
-  if (!db) return { monthly: [], peakMonth: '' };
-  // 查询注册量最多的月份（避免用 month 作为别名，防止 MySQL 保留字冲突）
-  const peakMonthRaw = await db.execute(sql`
+  if (!db) return { monthly: [], peakMonth: '', availableMonths: [] };
+  // 查询所有有数据的月份（供前端下拉选择）
+  const allMonthsRaw = await db.execute(sql`
     SELECT DATE_FORMAT(createdAt, '%Y-%m') as ym, COUNT(*) as cnt
     FROM wx_users
     WHERE createdAt IS NOT NULL
     GROUP BY ym
     ORDER BY cnt DESC
-    LIMIT 1
   `);
-  const peakRows = peakMonthRaw[0] as unknown as any[];
-  if (!peakRows || peakRows.length === 0) return { monthly: [], peakMonth: '' };
-  const peakMonth: string = (peakRows[0]?.ym as string) ?? '';
-  if (!peakMonth) return { monthly: [], peakMonth: '' };
+  const allMonthRows = allMonthsRaw[0] as unknown as any[];
+  const availableMonths = (allMonthRows ?? []).map((r: any) => ({ month: r.ym as string, count: Number(r.cnt) }));
+  if (availableMonths.length === 0) return { monthly: [], peakMonth: '', availableMonths: [] };
+  // 确定当前展示月份：优先用户选择 > 峰值月
+  const peakMonth = selectedMonth && availableMonths.some(m => m.month === selectedMonth)
+    ? selectedMonth
+    : availableMonths[0].month;
   // 按日展开该月注册曲线
   const raw = await db.execute(sql`
     SELECT DATE_FORMAT(createdAt, '%m-%d') as day_label, COUNT(*) as cnt
@@ -491,7 +493,7 @@ export async function getScreenUserGrowth() {
     ORDER BY day_label ASC
   `);
   const monthly = (raw[0] as unknown as any[]).map((r: any) => ({ month: r.day_label as string, count: Number(r.cnt) }));
-  return { monthly, peakMonth };
+  return { monthly, peakMonth, availableMonths };
 }
 
 /** 左侧 C：松果 AI 助手活跃度（问答配对） */
@@ -499,20 +501,25 @@ export async function getScreenAiActivity() {
   const db = await getDb();
   if (!db) return { todayCount: 0, totalCount: 0, recentQuestions: [] };
   const [totalResult] = await db.select({ count: count() }).from(wxMessages);
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  // 使用 UTC+8 时区的今日零点（微信数据均为中国时间）
+  const now = new Date();
+  const utc8Now = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const todayStr = utc8Now.toISOString().slice(0, 10); // YYYY-MM-DD in UTC+8
+  const todayStart = new Date(todayStr + 'T00:00:00+08:00');
   const [todayResult] = await db.select({ count: count() }).from(wxMessages).where(gte(wxMessages.createdAt, todayStart));
   // content = 用户提问，senderNick = AI 回复（ETL 临时借用）
+  // 取 50 条以保证弹幕内容充足
   const recentRaw = await db.select({
     id: wxMessages.id,
     content: wxMessages.content,
     senderNick: wxMessages.senderNick,
     senderId: wxMessages.senderId,
     createdAt: wxMessages.createdAt,
-  }).from(wxMessages).orderBy(desc(wxMessages.createdAt)).limit(10);
+  }).from(wxMessages).orderBy(desc(wxMessages.createdAt)).limit(50);
   const recentQuestions = recentRaw.map(m => ({
     id: m.id,
-    question: (m.content ?? '').slice(0, 30),
-    answer: (m.senderNick ?? '').slice(0, 30),
+    question: (m.content ?? '').slice(0, 60),
+    answer: (m.senderNick ?? '').slice(0, 60),
     nick: (m.senderId ?? '').slice(-6) || '用户',
     createdAt: m.createdAt,
   }));
@@ -553,13 +560,24 @@ export async function getScreenArticleBubble() {
 /** 中央底部：平台官方账号流水墙 */
 export async function getScreenCoinsFeed() {
   const db = await getDb();
-  if (!db) return { feed: [], isOfficialOnly: false };
+  if (!db) return { feed: [], isOfficialOnly: false, totalRows: 0, debugSample: [] };
   const OFFICIAL_ID = '6d99dae869970b5a01151dce5b866f7c';
-  // 先尝试查询官方账号相关流水
+  // 先查询表中总记录数和 senderId 样本（调试用）
+  const countRaw = await db.execute(sql`SELECT COUNT(*) as cnt FROM wx_coins_transactions`);
+  const totalRows = Number((countRaw[0] as unknown as any[])[0]?.cnt ?? 0);
+  const sampleRaw = await db.execute(sql`
+    SELECT senderId, receiverId, wxId FROM wx_coins_transactions LIMIT 5
+  `);
+  const debugSample = (sampleRaw[0] as unknown as any[]).map((r: any) => ({
+    senderId: r.senderId ?? null,
+    receiverId: r.receiverId ?? null,
+    wxId: r.wxId ?? null,
+  }));
+  // 尝试多种匹配方式：senderId/receiverId 或 wxId
   let raw = await db.execute(sql`
     SELECT id, action, coinAmount, coinType, senderId, receiverId, reason, transactionDate
     FROM wx_coins_transactions
-    WHERE senderId = ${OFFICIAL_ID} OR receiverId = ${OFFICIAL_ID}
+    WHERE senderId = ${OFFICIAL_ID} OR receiverId = ${OFFICIAL_ID} OR wxId = ${OFFICIAL_ID}
     ORDER BY transactionDate DESC
     LIMIT 30
   `);
@@ -586,7 +604,7 @@ export async function getScreenCoinsFeed() {
     reason: (r.reason ?? '') as string,
     transactionDate: r.transactionDate != null ? Number(r.transactionDate) : null,
   }));
-  return { feed, isOfficialOnly };
+  return { feed, isOfficialOnly, totalRows, debugSample };
 }
 
 /** 右侧 D：热门文章排行榜 Top5 */

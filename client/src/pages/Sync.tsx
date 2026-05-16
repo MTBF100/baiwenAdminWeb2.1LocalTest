@@ -20,6 +20,7 @@ const collections = [
   { value: "Article", label: "文章集合 (Article)" },
   { value: "Active", label: "活动集合 (Active)" },
   { value: "songGoMessage", label: "消息集合 (songGoMessage)" },
+  { value: "Cookies", label: "积分交易集合 (Cookies)" },
   { value: "all", label: "全部集合" },
 ];
 

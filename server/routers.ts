@@ -402,10 +402,10 @@ wxUsers: router({
         return await db.getSyncLogs(input);
       }),
     triggerSync: adminProcedure
-      .input(z.object({ collection: z.enum(["Users", "Article", "Active", "songGoMessage", "all"]) }))
+      .input(z.object({ collection: z.enum(["Users", "Article", "Active", "songGoMessage", "Cookies", "all"]) }))
       .mutation(async ({ input, ctx }) => {
         const collections = input.collection === "all"
-          ? ["Users", "Article", "Active", "songGoMessage"]
+          ? ["Users", "Article", "Active", "songGoMessage", "Cookies"]
           : [input.collection];
 
         const results = [];
@@ -572,7 +572,9 @@ wxUsers: router({
   screen: router({
     kpi: adminProcedure.query(async () => db.getScreenKpi()),
     deviceStats: adminProcedure.query(async () => db.getScreenDeviceStats()),
-    userGrowth: adminProcedure.query(async () => db.getScreenUserGrowth()),
+    userGrowth: adminProcedure
+      .input(z.object({ month: z.string().optional() }).optional())
+      .query(async ({ input }) => db.getScreenUserGrowth(input?.month)),
     aiActivity: adminProcedure.query(async () => db.getScreenAiActivity()),
     articleBubble: adminProcedure.query(async () => db.getScreenArticleBubble()),
     coinsFeed: adminProcedure.query(async () => db.getScreenCoinsFeed()),

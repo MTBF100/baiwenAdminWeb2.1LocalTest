@@ -127,6 +127,7 @@ export default function DataScreen() {
   const [, setLocation] = useLocation();
   const [tick, setTick] = useState(0);
   const feedRef = useRef<HTMLDivElement>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string | undefined>(undefined);
 
   // 认证守卫：未登录跳转到登录页
   useEffect(() => {
@@ -144,7 +145,10 @@ export default function DataScreen() {
   // 数据请求
   const { data: kpi } = trpc.screen.kpi.useQuery(undefined, { refetchInterval: 30_000 });
   const { data: device } = trpc.screen.deviceStats.useQuery(undefined, { refetchInterval: 60_000 });
-  const { data: growth } = trpc.screen.userGrowth.useQuery(undefined, { refetchInterval: 60_000 });
+  const { data: growth } = trpc.screen.userGrowth.useQuery(
+    selectedMonth ? { month: selectedMonth } : undefined,
+    { refetchInterval: 60_000 }
+  );
   const { data: ai } = trpc.screen.aiActivity.useQuery(undefined, { refetchInterval: 15_000 });
   const { data: bubble } = trpc.screen.articleBubble.useQuery(undefined, { refetchInterval: 60_000 });
   const { data: coins } = trpc.screen.coinsFeed.useQuery(undefined, { refetchInterval: 15_000 });
@@ -221,6 +225,7 @@ export default function DataScreen() {
     },
     yAxis: {
       type: "category",
+      inverse: true,
       data: device?.top5Models?.map((m) => m.model) ?? [],
       axisLabel: { color: TEXT_MAIN, fontSize: 10 },
       axisLine: { show: false },
@@ -346,10 +351,11 @@ export default function DataScreen() {
         ]) ?? [],
         itemStyle: {
           color: (p: any) => {
-            // 用原始值计算点赞率颜色
+            // 用索引和点赞率共同决定颜色，覆盖全色相
             const ratio = (p.data[5] ?? 0) / ((p.data[4] ?? 0) + 1);
-            const h = Math.round(180 + ratio * 80);
-            return `oklch(0.68 0.18 ${h})`;
+            const baseHue = (p.dataIndex * 47) % 360; // 黄金角分散
+            const h = (baseHue + ratio * 60) % 360;
+            return `oklch(0.72 0.19 ${h})`;
           },
           opacity: 0.85,
           shadowBlur: 12,
@@ -382,6 +388,7 @@ export default function DataScreen() {
     },
     yAxis: {
       type: "category",
+      inverse: true,
       data: topArt?.top5?.map((a) =>
         (a.title ?? "").length > 12 ? (a.title ?? "").slice(0, 12) + "…" : (a.title ?? "")
       ) ?? [],
@@ -594,6 +601,28 @@ export default function DataScreen() {
 
           {/* B: 用户增长趋势 */}
           <Panel title={`用户增长趋势（${growth?.peakMonth ?? ''}）`} className="flex-1">
+            {/* 月份选择器 */}
+            {(growth?.availableMonths ?? []).length > 1 && (
+              <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+                {growth!.availableMonths.map((m: any) => (
+                  <button
+                    key={m.month}
+                    onClick={() => setSelectedMonth(m.month)}
+                    style={{
+                      padding: '2px 8px',
+                      fontSize: 9,
+                      borderRadius: 4,
+                      border: `1px solid ${(growth?.peakMonth === m.month) ? NEON : BORDER}`,
+                      background: (growth?.peakMonth === m.month) ? `${NEON}20` : 'transparent',
+                      color: (growth?.peakMonth === m.month) ? NEON : TEXT_DIM,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {m.month}({m.count})
+                  </button>
+                ))}
+              </div>
+            )}
             <ReactECharts
               option={growthOption}
               style={{ height: "100%", minHeight: 100 }}
@@ -976,18 +1005,22 @@ const CHAT_COLORS = [NEON, NEON2, NEON_GREEN, NEON_AMBER, "#A78BFA", "#F472B6", 
 
 function AiChatScroller({ questions }: { questions: { id: number; question: string; answer: string; nick: string }[] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
 
-  // 自动滚动
+  // 无缝循环滚动：当滚动到第一份数据结束时，无感重置到顶部
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    const inner = innerRef.current;
+    if (!el || !inner || questions.length === 0) return;
     const id = setInterval(() => {
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 4) {
-        el.scrollTop = 0;
+      // 当滚动超过第一份数据的高度时，无感重置
+      const halfHeight = inner.scrollHeight / 2;
+      if (el.scrollTop >= halfHeight) {
+        el.scrollTop -= halfHeight;
       } else {
         el.scrollTop += 1;
       }
-    }, 60);
+    }, 50);
     return () => clearInterval(id);
   }, [questions]);
 
@@ -999,60 +1032,63 @@ function AiChatScroller({ questions }: { questions: { id: number; question: stri
     );
   }
 
+  // 复制一份数据实现无缝循环
+  const doubled = [...questions, ...questions];
+
   return (
     <div
       ref={scrollRef}
       style={{
         flex: 1,
         overflow: "hidden",
-        display: "flex",
-        flexDirection: "column",
-        gap: 3,
         paddingTop: 2,
       }}
     >
-      {questions.map((q, i) => {
-        const c = CHAT_COLORS[i % CHAT_COLORS.length];
-        return (
-          <div key={q.id} style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-            {/* 用户提问 */}
-            <div
-              style={{
-                fontSize: 10,
-                background: `${c}0A`,
-                borderRadius: 4,
-                padding: "3px 6px",
-                borderLeft: `2px solid ${c}70`,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              <span style={{ color: c, fontWeight: 600 }}>{q.nick}</span>
-              <span style={{ color: TEXT_DIM, margin: "0 3px" }}>问:</span>
-              <span style={{ color: c, opacity: 0.85 }}>{q.question || '…'}</span>
+      <div ref={innerRef} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        {doubled.map((q, i) => {
+          const c = CHAT_COLORS[i % CHAT_COLORS.length];
+          const answerColor = CHAT_COLORS[(i + 3) % CHAT_COLORS.length];
+          return (
+            <div key={`${q.id}-${i}`} style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+              {/* 用户提问 */}
+              <div
+                style={{
+                  fontSize: 10,
+                  background: `${c}0A`,
+                  borderRadius: 4,
+                  padding: "3px 6px",
+                  borderLeft: `2px solid ${c}70`,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                <span style={{ color: c, fontWeight: 600 }}>{q.nick}</span>
+                <span style={{ color: TEXT_DIM, margin: "0 3px" }}>问:</span>
+                <span style={{ color: c, opacity: 0.85 }}>{q.question || '…'}</span>
+              </div>
+              {/* AI 回复（彩色） */}
+              <div
+                style={{
+                  fontSize: 10,
+                  background: `${answerColor}06`,
+                  borderRadius: 4,
+                  padding: "3px 6px",
+                  borderLeft: `2px solid ${answerColor}40`,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  marginLeft: 8,
+                }}
+              >
+                <span style={{ color: answerColor, fontWeight: 600 }}>🤖 AI</span>
+                <span style={{ color: TEXT_DIM, margin: "0 3px" }}>答:</span>
+                <span style={{ color: answerColor, opacity: 0.85 }}>{q.answer || '…'}</span>
+              </div>
             </div>
-            {/* AI 回复 */}
-            <div
-              style={{
-                fontSize: 10,
-                background: "rgba(255,255,255,0.02)",
-                borderRadius: 4,
-                padding: "3px 6px",
-                borderLeft: `2px solid ${NEON}40`,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                marginLeft: 8,
-              }}
-            >
-              <span style={{ color: NEON, fontWeight: 600 }}>🤖 AI</span>
-              <span style={{ color: TEXT_DIM, margin: "0 3px" }}>答:</span>
-              <span style={{ color: NEON_GREEN, opacity: 0.85 }}>{q.answer || '…'}</span>
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
