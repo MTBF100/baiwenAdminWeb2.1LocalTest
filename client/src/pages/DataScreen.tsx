@@ -600,7 +600,7 @@ export default function DataScreen() {
           </Panel>
 
           {/* B: 用户增长趋势 */}
-          <Panel title={`用户增长趋势（${growth?.peakMonth ?? ''}）`} className="flex-1">
+          <Panel title="用户增长趋势" className="flex-1">
             {/* 月份选择器 */}
             {(growth?.availableMonths ?? []).length > 1 && (
               <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
@@ -656,10 +656,13 @@ export default function DataScreen() {
                 </div>
                 {/* 临时调试信息，确认后删除 */}
                 {(ai as any)?.debugAi && (
-                  <div style={{ fontSize: 8, color: '#666', marginTop: 2, textAlign: 'center', lineHeight: 1.3 }}>
-                    <div>最新记录: {(ai as any).debugAi.latestCreatedAt}</div>
-                    <div>今日范围: {(ai as any).debugAi.todayStartUtc?.slice(0,19)}</div>
-                    <div>~{(ai as any).debugAi.tomorrowStartUtc?.slice(0,19)}</div>
+                  <div style={{ fontSize: 7, color: "#888", marginTop: 2, textAlign: "left", lineHeight: 1.4, maxWidth: 120 }}>
+                    <div>TZ: {(ai as any).debugAi.mysqlSessionTz}/{(ai as any).debugAi.mysqlGlobalTz}</div>
+                    <div>NOW: {String((ai as any).debugAi.mysqlNow).slice(0,19)}</div>
+                    <div>created: {(ai as any).debugAi.latestCreatedAt?.slice(0,19)}</div>
+                    <div>synced: {(ai as any).debugAi.latestSyncedAt?.slice(0,19)}</div>
+                    <div>today-c: {(ai as any).debugAi.todayByCreatedAt}</div>
+                    <div>today-s: {(ai as any).debugAi.todayBySyncedAt}</div>
                   </div>
                 )}
               </div>

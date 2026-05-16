@@ -519,29 +519,36 @@ export async function getScreenAiActivity() {
   const db = await getDb();
   if (!db) return { todayCount: 0, totalCount: 0, recentQuestions: [] };
   const [totalResult] = await db.select({ count: count() }).from(wxMessages);
-  // 计算 UTC+8 今日零点的 UTC 时间，直接用字符串构造避免时区问题
-  const now = new Date();
-  const utc8Ms = now.getTime() + 8 * 3600_000;
-  const utc8Str = new Date(utc8Ms).toISOString().slice(0, 10); // YYYY-MM-DD in UTC+8
-  // UTC+8 今日零点 = 该日期的 00:00 UTC+8 = 该日期前一天 16:00 UTC
-  const todayStartUtc = new Date(utc8Str + 'T00:00:00+08:00'); // 自动转为 UTC
-  const tomorrowStartUtc = new Date(todayStartUtc.getTime() + 86400_000);
-  // 直接用 BETWEEN 比较 UTC 时间戳，不依赖 CONVERT_TZ
-  const todayCountRaw = await db.execute(sql`
+  // ── 今日统计：同时用 createdAt 和 syncedAt 两种方式计算，取较大值 ──
+  // 查询 MySQL session 时区
+  const tzRaw = await db.execute(sql`SELECT @@session.time_zone as tz, @@global.time_zone as gtz, NOW() as now_val`);
+  const mysqlTz = (tzRaw[0] as unknown as any[])[0];
+  // 策略：直接用 MySQL 的 CURDATE() 来判断“今天”，避免 JS/MySQL 时区偏移
+  // 同时用 createdAt 和 syncedAt 两个字段分别统计，取较大值
+  const todayByCreatedAt = await db.execute(sql`
     SELECT COUNT(*) as cnt FROM wx_messages
-    WHERE createdAt >= ${todayStartUtc} AND createdAt < ${tomorrowStartUtc}
+    WHERE DATE(createdAt) = CURDATE()
   `);
-  const todayResult = { count: Number((todayCountRaw[0] as unknown as any[])[0]?.cnt ?? 0) };
-  // 调试信息：返回最新一条记录的 createdAt 和今日范围，便于排查
+  const todayBySync = await db.execute(sql`
+    SELECT COUNT(*) as cnt FROM wx_messages
+    WHERE DATE(syncedAt) = CURDATE()
+  `);
+  const cntByCreated = Number((todayByCreatedAt[0] as unknown as any[])[0]?.cnt ?? 0);
+  const cntBySync = Number((todayBySync[0] as unknown as any[])[0]?.cnt ?? 0);
+  const todayResult = { count: Math.max(cntByCreated, cntBySync) };
+  // 调试信息：返回完整的时区和数据信息
   const latestRaw = await db.execute(sql`
-    SELECT createdAt FROM wx_messages ORDER BY createdAt DESC LIMIT 1
+    SELECT createdAt, syncedAt FROM wx_messages ORDER BY id DESC LIMIT 1
   `);
-  const latestCreatedAt = (latestRaw[0] as unknown as any[])[0]?.createdAt ?? null;
+  const latestRow = (latestRaw[0] as unknown as any[])[0] ?? {};
   const debugAi = {
-    todayStartUtc: todayStartUtc.toISOString(),
-    tomorrowStartUtc: tomorrowStartUtc.toISOString(),
-    latestCreatedAt: latestCreatedAt instanceof Date ? latestCreatedAt.toISOString() : String(latestCreatedAt),
-    utc8Today: utc8Str,
+    mysqlSessionTz: String(mysqlTz?.tz ?? ''),
+    mysqlGlobalTz: String(mysqlTz?.gtz ?? ''),
+    mysqlNow: String(mysqlTz?.now_val ?? ''),
+    latestCreatedAt: latestRow.createdAt instanceof Date ? latestRow.createdAt.toISOString() : String(latestRow.createdAt ?? 'null'),
+    latestSyncedAt: latestRow.syncedAt instanceof Date ? latestRow.syncedAt.toISOString() : String(latestRow.syncedAt ?? 'null'),
+    todayByCreatedAt: cntByCreated,
+    todayBySyncedAt: cntBySync,
   };
   // content = 用户提问，senderNick = AI 回复（ETL 临时借用）
   // 取 50 条以保证弹幕内容充足
